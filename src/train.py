@@ -1,4 +1,6 @@
 import os
+import numpy as np
+import cv2
 import torch
 import datetime
 import argparse
@@ -9,7 +11,7 @@ from tqdm import tqdm
 from pytorch_msssim import ssim
 from models import SuperResolutionCNN, Generator, Discriminator, GeneratorCriterion
 from datasets import getDataset
-from utils import psnr, plot_snr, plot_ssim, sanity_check_dir, saveAsCsv
+from utils import psnr, plot_snr, plot_ssim, sanity_check, saveAsCsv
 from config import Config
 
 parser = argparse.ArgumentParser(description='Training script for image upscaling neural network models.')
@@ -42,7 +44,7 @@ def main():
         disc_model = Discriminator(channels).to(Config.device)
         gen_optim = optim.Adam(gen_model.parameters(), lr=Config.LEARNING_RATE)
         disc_optim = optim.Adam(disc_model.parameters(), lr=Config.LEARNING_RATE)
-        criterion = GeneratorCriterion().to(Config.device)
+        criterion = GeneratorCriterion(channels).to(Config.device)
         ct = datetime.datetime.now()
         result_path = f'../output/Training/SRGAN/{ct.year}.{ct.month}.{ct.day}_{ct.hour}.{ct.minute}.{ct.second}'
         os.makedirs(result_path, exist_ok=True)
@@ -53,22 +55,28 @@ def main():
         temp_result = None
         if arch == 'srcnn':
             train_srcnn(srcnn_model, srcnn_optim, criterion, srcnn_train_loader)
-            temp_result = validate(srcnn_model, srcnn_valid_loader, channels)
+            temp_result = validate(srcnn_model, arch, srcnn_valid_loader, channels)
         else:
             train_srgan(gen_model, disc_model, gen_optim, disc_optim, criterion, srgan_train_loader)
-            temp_result = validate(gen_model, srgan_valid_loader, channels)
+            temp_result = validate(gen_model, arch, srgan_valid_loader, channels)
         
         print(f"PSNR = {temp_result[0]:.3f}, SSIM = {temp_result[1]:.3f}")
         snr_data.append(temp_result[0])
         ssim_data.append(temp_result[1])
         if (epoch % 100 == 0 or epoch==1):
-            torch.save(srcnn_model.state_dict(), f"{result_path}/model.pth")
+            if arch == 'srcnn':
+                torch.save(srcnn_model.state_dict(), f"{result_path}/model.pth")
+            else:
+                torch.save(gen_model.state_dict(), f"{result_path}/model.pth")
             saveAsCsv(snr_data, ssim_data, result_path)
             plot_snr(snr_data, result_path)
             plot_ssim(ssim_data, result_path)
             check_path = result_path + f'/sanity_checks'
             os.makedirs(check_path, exist_ok=True)
-            sanity_check_dir(srcnn_model, Config.test_down_path_lr_up, Config.test_down_path_hr, check_path + f'/{epoch}.pdf', True, channels)
+            if arch == 'srcnn':
+                sanity_check(srcnn_model, Config.test_down_path_lr_up, Config.test_down_path_hr, check_path + f'/{epoch}.pdf', True, channels)
+            else:
+                sanity_check(gen_model, Config.test_down_path_lr, Config.test_down_path_hr, check_path + f'/{epoch}.pdf', False, channels)
 
 
 def train_srcnn(model, optim, criterion, loader):
@@ -107,7 +115,7 @@ def train_srgan(gen_model, disc_model, gen_optim, disc_optim, criterion, loader)
         gen_optim.step()
         disc_model.train()
 
-def validate(model, loader, channels):
+def validate(model, arch, loader, channels):
     model.eval()
     valid_psnr = 0.0
     valid_ssim = 0.0
@@ -118,11 +126,22 @@ def validate(model, loader, channels):
             pred = None
 
             if channels == 1:
-                pred_Y = model(low_res[:, 0, :, :])
-                pred = torch.zeros((low_res.shape[0], 3, low_res.shape[2], low_res.shape[3]), dtype=torch.float)
+                temp = torch.zeros(low_res.shape[0], 1, low_res.shape[2], low_res.shape[3])
+                temp[:, 0, :, :] = low_res[:, 0, :, :]
+                pred_Y = model(temp.to(Config.device))
+                pred = torch.zeros((high_res.shape[0], 3, high_res.shape[2], high_res.shape[3]), dtype=torch.float)
                 pred[:,0,:,:] = pred_Y
-                pred[:,1,:,:] = low_res[:, 1, :, :]
-                pred[:,2,:,:] = low_res[:, 2, :, :]
+                if arch == 'srcnn':
+                    pred[:,1,:,:] = low_res[:, 1, :, :]
+                    pred[:,2,:,:] = low_res[:, 2, :, :]
+                else:
+                    pred_CB = np.zeros((high_res.shape[0], high_res.shape[2], high_res.shape[3]))
+                    pred_CR = np.zeros((high_res.shape[0], high_res.shape[2], high_res.shape[3]))
+                    for i in range(low_res.shape[0]):
+                        pred_CB[i] = cv2.resize(low_res[i, 1, :, :].detach().cpu().numpy(), (high_res.shape[3], high_res.shape[2]), interpolation=cv2.INTER_CUBIC)
+                        pred_CR[i] = cv2.resize(low_res[i, 2, :, :].detach().cpu().numpy(), (high_res.shape[3], high_res.shape[2]), interpolation=cv2.INTER_CUBIC)
+                    pred[:,1,:,:] = torch.tensor(pred_CB, dtype=torch.float)
+                    pred[:,2,:,:] = torch.tensor(pred_CR, dtype=torch.float)
                 pred = pred.to(Config.device)
             elif channels == 3:
                 pred = model(low_res)
