@@ -4,25 +4,34 @@ import torch
 import datetime
 import argparse
 import numpy as np
-import srcnn, srgan
+from models import SuperResolutionCNN, Generator
 from PIL import Image
 import torchvision.transforms as T
 
 parser = argparse.ArgumentParser(description='description')
-parser.add_argument('--arch', type=str, choices=['srgan', 'srcnn'], required=True)
-parser.add_argument('--channels', type=int, choices=[1, 3], required=True)
-parser.add_argument('--scale-factor', dest='scale_factor', type=int, choices=[2, 4], required=True)
-parser.add_argument('--img-path', dest='img_path', type=str, required=True)
-parser.add_argument('--weights-path', dest='weights_path', type=str, required=True)
+parser.add_argument('--arch', type=str, choices=['srgan', 'srcnn'], default='srgan')
+parser.add_argument('--channels', type=int, choices=[1, 3], default=1)
+parser.add_argument('--img', type=str, required=True)
+parser.add_argument('--weights-path', dest='weights_path', type=str, required=False, default=None)
+
+weights_dict = {
+    ('srcnn', 1): '../data/Saved/srcnn2x2500Y/model.pth',
+    ('srcnn', 3): '../data/Saved/srcnn2x2500RGB/model.pth',
+    ('srgan', 1): '../data/Saved/srgan2x1500Y/model.pth',
+    ('srgan', 3): '../data/Saved/srgan2x1500RGB/model.pth',
+}
 
 def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     args = vars(parser.parse_args())
     arch = args['arch']
     channels = args['channels']
-    scale_factor = args['scale_factor']
-    img_path = args['img_path']
+    img_path = args['img']
     weights_path = args['weights_path']
+    scale_factor = 2
+
+    if weights_path == None:
+        weights_path = weights_dict[(arch, channels)]
 
     ct = datetime.datetime.now()
     result_path = f'../output/Test/{arch.upper()}/{ct.year}.{ct.month}.{ct.day}_{ct.hour}.{ct.minute}.{ct.second}'
@@ -30,19 +39,20 @@ def main():
 
     model = None
     if arch == 'srcnn':
-        model = srcnn.SuperResolutionCNN(channels).to(device)
+        model = SuperResolutionCNN(channels).to(device)
     elif arch == 'srgan':
-        model = srgan.Generator(scale_factor, channels).to(device)
+        model = Generator(scale_factor, channels).to(device)
     model.load_state_dict(torch.load(weights_path, map_location=device))
     
     img = cv2.imread(img_path)
     inter_img = cv2.resize(img, (img.shape[1] * scale_factor, img.shape[0] * scale_factor), interpolation=cv2.INTER_CUBIC)
     filename = os.path.basename(img_path)
     img_name = filename.split('.')[0]
-    temp_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(float)
-    if arch == 'srcnn':
-        temp_img = cv2.resize(temp_img, (temp_img.shape[1] * scale_factor, temp_img.shape[0] * scale_factor), interpolation=cv2.INTER_CUBIC)
+    temp_img = None
     if channels == 1:
+        temp_img = cv2.cvtColor(img, cv2.COLOR_BGR2YCR_CB)
+        if arch == 'srcnn':
+            temp_img = cv2.resize(temp_img, (temp_img.shape[1] * scale_factor, temp_img.shape[0] * scale_factor), interpolation=cv2.INTER_CUBIC)
         temp_img_Y = torch.zeros((1, 1, temp_img.shape[0], temp_img.shape[1]))
         temp_img_Y[0, 0, :, :] = torch.tensor(temp_img[:, :, 0]) / 255
         if arch == 'srgan':
@@ -55,6 +65,9 @@ def main():
         temp_img[:,:,0] = pred
         temp_img = cv2.cvtColor(temp_img, cv2.COLOR_YCR_CB2BGR)
     else:
+        temp_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(float)
+        if arch == 'srcnn':
+            temp_img = cv2.resize(temp_img, (temp_img.shape[1] * scale_factor, temp_img.shape[0] * scale_factor), interpolation=cv2.INTER_CUBIC)
         temp_img /= 255
         temp_img = np.array(temp_img.transpose([2, 0, 1]))
         temp_img = torch.tensor(np.array([temp_img]), dtype=torch.float)

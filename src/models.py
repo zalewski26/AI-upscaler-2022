@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from torchvision.models.vgg import vgg16, VGG16_Weights
 
-NUM_OF_RESIDUAL = 10
+NUM_OF_RESIDUAL = 6
 NUM_OF_DISC_BLOCKS = 7
 
 class SuperResolutionCNN(nn.Module):
