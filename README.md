@@ -19,4 +19,4 @@ Proces dwukrotnego powiększenia danego zdjęcia, przy wykorzystaniu wybranego m
 python3 run.py --arch $[srcnn/srgan] --channels $[1/3] --img-path $image_to_upscale --weights-path $path_to_saved_weights
 ```
 W przypadku pominięcia parametru 'weights-path' wagi dobrane zostaną odpowiednio z katalogu 'data/Saved'.
-Domyślną wartością dla architektury jest sieć SRGAN, a dla liczby kanałów - '1'. 
+Domyślną architekturą jest model SRGAN, natomiast domyślną liczbą kanałów - 1. 
